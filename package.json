@@ -1,6 +1,6 @@
 {
   "name": "@confused-techie/atompackagesarchive",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Lets archive all of the fantastic packages made for Atom Together.",
   "scripts": {
     "test": "echo no test specified."

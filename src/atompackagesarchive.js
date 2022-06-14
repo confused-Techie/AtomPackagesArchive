@@ -8,13 +8,24 @@ async function run(rawArg) {
   var options = parseArgv(rawArg);
 
   if (options.status) {
-
-    // First we want to get the paginated results of every single package uploaded to Atom.io
-    getTotalPaginatedRequests()
-      .then((res) => {
-        paginatedRequests();
-      });
-    //paginatedRequests();
+    // then check all valid backup choices
+    if (options.backup == "ALL") {
+      // First we want to get the paginated results of every single package uploaded to Atom.io
+      getTotalPaginatedRequests()
+        .then((res) => {
+          paginatedRequests(options.backup);
+        });
+    } else if (options.backup == "PAGINATED") {
+      getTotalPaginatedRequests()
+        .then((res) => {
+          paginatedRequests(options.backup);
+        });
+    } else if (options.backup == "WEB") {
+      webBackup();
+    } else {
+      console.error(`Unrecognized Backup Method: ${options.backup}`);
+      process.exit(1);
+    }
 
   } else {
     console.error("Didn't like your options passed.");
@@ -25,36 +36,76 @@ async function run(rawArg) {
 module.exports = { run };
 
 var paginatedObj = {
-  page: 1,
+  page: 0,
   totalPages: 0
 };
 
+var failedAttempts = 0;
+var retries = 50;
+
+var packages = [];
+
 const findPage = new RegExp('&page=(\\d*)');
 
-function paginatedRequests() {
+function paginatedRequests(backup) {
 
-  for (var i = 1; i < 2; i++) {
-    var pageHeaders, pageContent;
+  var loop = true;
 
-    axios.get(`https://atom.io/api/packages?page=${paginatedObj.page}`)
-      .then((response) => {
-        pageHeaders = response.headers;
-        pageContent = response.data;
+  while(loop) {
+    paginatedObj.page++;
+    getIndividualPage(paginatedObj.page, backup, 0, retries);
+
+    if (paginatedObj.page == paginatedObj.totalPages) {
+      console.log('Reached last page. Calling Package Write');
+      if (backup == "PACKAGES" || backup == "ALL") {
+        fs.writeFileSync('./archive/packages/all_packages.json', JSON.stringify(packages, '  ', '  '));
+        console.log('Wrote full packages.');
+      }
+      console.log('Exiting...');
+      loop = false;
+    }
+  }
+}
+
+async function getIndividualPage(page, backup, failed, maxRetry) {
+  axios.get(`https://atom.io/api/packages?page=${page}`)
+    .then((response) => {
+      if (backup == "PACKAGES" || backup == "ALL") {
+        packages = packages.concat(response.data);
+      }
+      if (backup == "PAGINATED" || backup == "ALL") {
+        var pageHeaders = response.headers;
+        var pageContent = response.data;
 
         // now to write the content
-        fs.writeFileSync(`./archive/paginated/page_${paginatedObj.page}_content.json`,
+        fs.writeFileSync(`./archive/paginated/page_${page}_content.json`,
           JSON.stringify(pageContent, '  ', '  '));
-        fs.writeFileSync(`./archive/paginated/page_${paginatedObj.page}_headers.txt`,
+        fs.writeFileSync(`./archive/paginated/page_${page}_headers.txt`,
           JSON.stringify(pageHeaders, '  ', '  '));
 
-        paginatedObj.page++;
-      })
-      .catch((err) => {
-        console.error(`Something went wrong arching data: ${err}`);
-        process.exit(1);
-      });
-  }
+        console.log(`Wrote Headers & Content for Page: ${page}`);
 
+        if (backup == "PACKAGES" || backup == "ALL") {
+          fs.writeFileSync('./archive/packages/all_packages.json', JSON.stringify(packages, '  ', '  '));
+          console.log('Wrote full packages.');
+        }
+      }
+    })
+    .catch((err) => {
+      failed++;
+      console.error(`Something went wrong archiving data: ${err}`);
+      console.error(`Current Attempt: ${page}`);
+
+      if (failed < maxRetry) {
+        console.log(`Attempting retry in ${2000 * failed} ms`);
+        setTimeout(() => {
+          getIndividualPage(page, backup, failed, maxRetry);
+        }, 2000 * failed);
+      } else {
+        console.log(`There have been over ${maxRetry} retries on fail. Exiting...`);
+        process.exit(1);
+      }
+    });
 }
 
 async function getTotalPaginatedRequests() {
@@ -83,4 +134,12 @@ async function getTotalPaginatedRequests() {
         process.exit(1);
       });
   });
+}
+
+async function webBackup() {
+  var links = [ "https://atom.io/" ];
+
+  while(links.length > 1) {
+
+  }
 }
