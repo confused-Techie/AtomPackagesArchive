@@ -8,7 +8,7 @@ function parseArgv(rawArg) {
 
   if (rawArg.length < 1) {
     console.log('No Arguments passed. Defaulting to ALL');
-    returnObj.backup == "ALL";
+    returnObj.backup = "ALL";
     return returnObj;
   } else {
 

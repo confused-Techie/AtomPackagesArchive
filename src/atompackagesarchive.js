@@ -58,6 +58,7 @@ function paginatedRequests(backup) {
     if (paginatedObj.page == paginatedObj.totalPages) {
       console.log('Reached last page. Calling Package Write');
       if (backup == "PACKAGES" || backup == "ALL") {
+        fs.mkdirSync('./archive/packages/', { recursive: true })
         fs.writeFileSync('./archive/packages/all_packages.json', JSON.stringify(packages, '  ', '  '));
         console.log('Wrote full packages.');
       }
@@ -78,6 +79,7 @@ async function getIndividualPage(page, backup, failed, maxRetry) {
         var pageContent = response.data;
 
         // now to write the content
+        fs.mkdirSync('./archive/paginated/', { recursive: true })
         fs.writeFileSync(`./archive/paginated/page_${page}_content.json`,
           JSON.stringify(pageContent, '  ', '  '));
         fs.writeFileSync(`./archive/paginated/page_${page}_headers.txt`,
@@ -86,6 +88,7 @@ async function getIndividualPage(page, backup, failed, maxRetry) {
         console.log(`Wrote Headers & Content for Page: ${page}`);
 
         if (backup == "PACKAGES" || backup == "ALL") {
+          fs.mkdirSync('./archive/packages/', { recursive: true })
           fs.writeFileSync('./archive/packages/all_packages.json', JSON.stringify(packages, '  ', '  '));
           console.log('Wrote full packages.');
         }
