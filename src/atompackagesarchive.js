@@ -1,6 +1,7 @@
 const { parseArgv } = require("./options.js");
 const axios = require("axios");
 var fs = require("fs");
+//var URL = require("url-parse");
 
 async function run(rawArg) {
   // There are no arguments at this time, so we will just ignore any passed.
@@ -139,10 +140,181 @@ async function getTotalPaginatedRequests() {
   });
 }
 
+// ============== WEB BACKUP ======================
+var webObj = {
+  start_url: "https://atom.io",
+  visited: {},
+  to_visit: [],
+  pages_found: 1,
+  pages_visited: 0,
+  max_fails: 10,  // originally 50, but if it fails due to a consistent error this could go on some time. means max 50 secs
+};
+
 async function webBackup() {
-  var links = [ "https://atom.io/" ];
+  webObj.to_visit.push(webObj.start_url);
 
-  while(links.length > 1) {
+  crawl();
+}
 
+async function crawl() {
+  if (webObj.pages_visited >= webObj.pages_found) {
+    console.log(`All Pages visited: ${webObj.pages_visited}`);
+    return;
+  }
+  var nextPage = webObj.to_visit.pop();
+  if (nextPage in webObj.visited) {
+    // we've already visited the page, so crawl again.
+    crawl();
+  } else {
+    // link isn't in visited.
+    requestPage(nextPage, crawl, 1, webObj.max_fails);
+  }
+}
+
+function requestPage(url, callback, fails, max_fails) {
+  // add the page to previously visisted.
+  webObj.visited[url] = true;
+  webObj.pages_visited++;
+
+  axios.get(url)
+    .then((response) => {
+      if (response.headers["Content-Type"] == "image/png" || response.headers["Content-Type"] == "image/jpeg") {
+        // if this is image ddata skip trying to find any links
+        savePage(url, response.data);
+        callback();
+      } else if (response.headers["Content-Type"] == "text/css") {
+        // we will assume no links are found within css
+        savePage(url, response.data);
+        callback();
+      } else {
+        // else we will assume we can find links.
+        findLinks(response.data);
+        savePage(url, response.data);
+        callback();
+      }
+    })
+    .catch((error) => {
+      if (error.response) {
+        // got a proper response, but outside of 2XX range.
+        //findLinks(error.response);  // seems if this data is returned as json then our match fails.
+
+        // check headers to see what to pass to savePage since it can't take an object.
+        try {
+          // in the event that a response comes as undefined for whatever reason, this should prevent a crash.
+          if (error.headers["Content-Type"] == "application/json") {
+            savePage(error.status, JSON.stringify(error.response));
+          } else {
+            // lets assume it'll be html
+            try {
+              savePage(error.status, error.response);
+            } catch(err) {
+              console.error(`Failed to save page after error with response. Status: ${error.status}, URL: ${url}`);
+            }
+          }
+
+        } catch(err) {
+          console.error(`Failed to find details of page after an error response: URL: ${url}, Status: ${error.status}`);
+        }
+
+        //savePage(error.status, error.response);
+
+        if (error.status == 500) {
+          // basically if the server just failed, lets try again.
+          requestPage(url, callback, fails+1, max_fails);
+        } else {
+          // error may have been no auth, or 404, so we will move on.
+          //callback();
+        }
+        callback();
+      } else if (error.request) {
+        // server never responded
+        console.log(`No Response: ${error}`);
+        console.log(`Error URL: ${url}`);
+        console.log(`Waiting ${5000 * fails} ms to try again.`);
+        // We will wait some time before trying again.
+        setTimeout(() => {
+          requestPage(url, callback, fails+1, max_fails);
+        }, 5000 * fails);
+      } else {
+        // general error creating the request.
+        console.log(`General Error: ${error}`);
+        console.log(`Error URL: ${url}`);
+        console.log(`Waiting ${5000 * fails} ms to try again.`);
+        // we will wait some time before trying agian.
+        setTimeout(() => {
+          requestPage(url, callback, fails+1, max_fails);
+        }, 5000 * fails);
+      }
+    });
+}
+
+function savePage(title, data) {
+  var safe_title = slugToTitle(title);
+  console.log(`Saving: ${safe_title} to ./archive/web/${safe_title}`);
+  fs.mkdirSync("./archive/web/", { recursive: true});
+  fs.writeFileSync(`./archive/web/${safe_title}`, data);
+}
+
+function slugToTitle(url) {
+  if (typeof url === "string") {
+    url = url.replace("https://", "");
+    url = url.replace("http://", "");
+    // additionally the bottom replacement uses regex, to ensure that all instances found are replaced. Not just the first.
+    url = url.replace(/\//g, "--"); // this will be the new file seperator. Hopefully uncommon to find.
+
+    // NOW to make it OS safe filenames.
+    url = url.replace(/#/, "--POUND--").replace(/%/, "--PERCENT--").replace(/&/, "--AMPERSAND--").replace(/\{/, "--LBRACKET--")
+              .replace(/\}/, "--RBRACKET--").replace(/\</, "--LANGLE--").replace(/>/, "--RANGLE--").replace(/\*/, "--ASTERISK")
+              .replace(/\?/, "--QUESTION--").replace(/\\/, "--BACKSLASH").replace(/\$/, "--DOLLAR--").replace(/\!/, "--EXLAM--")
+              .replace(/'/, "--QUOTE--").replace(/"/, "--DQUOTE--").replace(/\:/, "--COLON--").replace(/@/, "--AT--")
+              .replace(/\+/, "--PLUS--").replace(/`/, "--BACKTICK--").replace(/\|/, "--PIPE--").replace(/\=/, "--EQUAL--");
+  }
+  // the URL could be a number if passing the status code for non-standard pages. In that case we don't want to touch it.
+  return url;
+}
+
+const linkAbsReg = new RegExp('https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b[-a-zA-Z0-9()@:%_\\+.~#?&//=]*', 'g');
+const linkRelReg = new RegExp('^[^\/]+\/[^\/].*$|^\/[^\/].*$');
+
+const srcRelReg = new RegExp('(?!src=")(\\/\\S*)(?=")(?<!http[s]{0,1}:\\/\\/\\S*)', 'g');
+// srcRelReg is made to only match if all of the following are true:
+// * src="{MATCH}"
+// * https:// OR http:// doesn't come before the string.
+// * the strings starts with / then continues with any possible text until "
+const hrefRelReg = new RegExp('(?!href=")(\\/\\S*)(?=")(?<!http[s]{0,1}:\\/\\/\\S*)', 'g');
+// hrefRelReg works exactly as srcRelReg except checking for href="{MATCH}"
+
+
+function findLinks(data) {
+  var links_found_absolute = data.match(linkAbsReg);
+  //var src_rel_found = srcRelReg.match(data);
+  var src_rel_found = data.match(srcRelReg);
+  var href_rel_found = data.match(hrefRelReg);
+
+  // then ensure that all absolute links are from atom.io
+  // using typeof object ensures an array is returned. Otherwise this may be processing image data.
+  if (typeof links_found_absolute === "object") {
+    links_found_absolute.forEach(function(ele) {
+      if (ele.includes("atom.io")) {
+        console.log(`Adding: ${ele}`);
+        webObj.to_visit.push(ele);
+        webObj.pages_found++;
+      }
+    });
+  }
+  if (typeof src_rel_found === "object") {
+    src_rel_found.forEach(function(ele) {
+      // since this is a known relative link we don't need to check if it has atom in it.
+      console.log(`Adding: ${ele}`);
+      webObj.to_visit.push(`${webObj.start_url}${ele}`); // creating an absolute URL from the relative.
+      webObj.pages_found++;
+    });
+  }
+  if (typeof href_rel_found === "object") {
+    href_rel_found.forEach(function(ele) {
+      console.log(`Adding: ${ele}`);
+      webObj.to_visit.push(`${webObj.start_url}${ele}`); // creating an absolute URL from the relative.
+      webObj.pages_found++;
+    });
   }
 }
