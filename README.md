@@ -50,6 +50,15 @@ Backs up ONLY paginated files of all available packages.
 
 Backs up ONLY the complete package file.
 
+* PACKAGEFILE
+
+Keep in mind this option can only be called after creating the main package file. By using ALL.
+
+This will go ahead and rely on the already created file, to then download the details for every single item. Due to this request failing WAY to frequently otherwise, there are large delays for downloading every item.
+So this will take quite some time. At least 200ms between every single request, and if they fail that increases exponentially. This means to download over 9,000 items, with a 200ms delay, with no failures its 30 minutes.
+
+Honestly it will still fail relatively frequently, just because the atom.io server is likely being bombarded with requests at this time. The only consistent way I could do a backup is to set this delay to 2 seconds. But that would mean over 5 hours of download. Which is just unrealistic.
+
 * WEB
 
 Attempts to back up all web pages, and all web page resources.

@@ -3,6 +3,7 @@ const axios = require("axios");
 var fs = require("fs");
 //var URL = require("url-parse");
 
+
 async function run(rawArg) {
   // There are no arguments at this time, so we will just ignore any passed.
   // but the top level if exists incase later on a check for valid options needs to succeed.
@@ -23,6 +24,8 @@ async function run(rawArg) {
         });
     } else if (options.backup == "WEB") {
       webBackup();
+    } else if (options.backup == "PACKAGEFILE") {
+      readPackageFile();
     } else {
       console.error(`Unrecognized Backup Method: ${options.backup}`);
       process.exit(1);
@@ -69,8 +72,15 @@ function paginatedRequests(backup) {
   }
 }
 
+function readPackageFile() {
+  var data = fs.readFileSync("./archive/packages/all_packages.json");
+  var packs = JSON.parse(data);
+  console.log("Read package file, calling for details");
+  getPackageDetails(packs);
+}
+
 async function getIndividualPage(page, backup, failed, maxRetry) {
-  axios.get(`https://atom.io/api/packages?page=${page}`)
+  axios.get(`https://atom.io/api/packages?page=${page}`, {headers: { 'User-Agent': 'Archival' } } )
     .then((response) => {
       if (backup == "PACKAGES" || backup == "ALL") {
         packages = packages.concat(response.data);
@@ -110,6 +120,53 @@ async function getIndividualPage(page, backup, failed, maxRetry) {
         process.exit(1);
       }
     });
+}
+
+async function getPackageDetails(package) {
+  console.log("Getting all package details...");
+  // setting up a fake loop here, since set timeout within the package detail is non-blocking.
+  // and we are about to make over 9 thousand requests.
+
+  detail_package = package;
+  fakeLoop();
+
+}
+
+var i = 0;
+var detail_package;
+
+function fakeLoop() {
+  setTimeout(() => {
+    getIndividualPackageDetail(encodeURIComponent(detail_package[i].name), 0, 20);
+    i++;
+    if (i < detail_package.length) {
+      fakeLoop();
+    }
+  }, 200);
+}
+
+async function getIndividualPackageDetail(packageName, failed, maxRetry) {
+    console.log(`IndivudalPackageDetail called: ${packageName}, ${failed}, ${maxRetry}`);
+    axios.get(`https://atom.io/api/packages/${packageName}`)
+      .then((response) => {
+        fs.mkdirSync("./archive/package_details/", {recursive: true});
+        fs.writeFileSync(`./archive/package_details/${packageName}.json`, JSON.stringify(response.data, '  ', '  '));
+        console.log(`Wrote Package Details for: ${packageName}`);
+      })
+      .catch((err) => {
+        failed++;
+        console.error(`Something went wrong grabbing indivudal package data: ${err}`);
+        if (failed < maxRetry) {
+          console.log(`Attempting retry in ${2000 * failed}ms`);
+          setTimeout(() => {
+            getIndividualPackageDetail(packageName, failed, maxRetry);
+          }, 2000 * failed);
+        } else {
+          console.log(`There have been over ${maxRetry} retries on fail. Exiting...`);
+          process.exit(1);
+        }
+      });
+
 }
 
 async function getTotalPaginatedRequests() {
